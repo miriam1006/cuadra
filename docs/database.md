@@ -4,7 +4,7 @@ Ejecuta `supabase/migrations/202611070001_initial.sql` en el SQL Editor de un pr
 
 ## Alta del primer comercio
 
-1. Crea el usuario del dueño en Supabase Auth (o completa su primer acceso con enlace mágico).
+1. Crea el usuario administrador en Supabase Auth con correo y contraseña y confirma su correo para el piloto.
 2. Copia su UUID desde Authentication → Users.
 3. En SQL Editor inserta el comercio, sustituyendo los valores de ejemplo:
 

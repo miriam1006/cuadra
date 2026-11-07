@@ -4,7 +4,7 @@ Caja móvil para cobrar con CoDi a través de Pey: QR por venta, confirmación v
 
 ## Estado real
 
-Implementación inicial para un solo comercio/dueña. No contiene pagos simulados, credenciales ni datos bancarios. Es una base para un piloto supervisado: requiere configurar Supabase/Pey/Vercel y ejecutar las pruebas de integración antes de cobrar. No se ha validado aún ningún pago real.
+Implementación inicial para un solo comercio y un usuario administrador. No contiene pagos simulados, credenciales ni datos bancarios. Es una base para un piloto supervisado: requiere configurar Supabase/Pey/Vercel y ejecutar las pruebas de integración antes de cobrar. No se ha validado aún ningún pago real.
 
 ## Ejecutar
 
@@ -29,7 +29,7 @@ Abrir http://localhost:3000/login. El webhook real necesita HTTPS público: usar
 6. Actualizar `APP_URL` a ese origen HTTPS **sin barra final**, configurar en Supabase Auth la Site URL con ese origen y autorizar el redirect exacto `https://TU-DOMINIO/auth/callback`. Redesplegar después de cambiar variables.
 7. En Pey → Desarrollador → engrane de la API key, configurar `https://TU-DOMINIO/api/webhooks/pey`. Guardar el secreto en `PEY_WEBHOOK_SECRET` de Vercel. Nunca pegarlo en un chat.
 8. Asegurar que Pey pueda acceder al webhook sin un login de Vercel. La autenticación del endpoint es su firma, no la sesión del dueño. Revisar Deployment Protection o usar el dominio de producción según tu configuración.
-9. Probar el enlace mágico desde `/login` con el correo autorizado y abrirlo en el mismo navegador. Crear el comercio y abrir caja.
+9. Crear un usuario con correo y contraseña en Supabase Authentication → Users y marcarlo confirmado para este piloto. Configurar OWNER_EMAIL con ese correo. Iniciar sesión en `/login`, crear el comercio y abrir caja.
 10. Cobrar **$0.01 MXN** utilizando la cuenta de pruebas de Pey. Pagar con CoDi desde otro dispositivo, esperar el aviso, revisar el folio/corte y comprobar el movimiento en Pey. Los centavos enviados a la cuenta de prueba pueden no devolverse; el usuario ya confirmó esta condición.
 
 No se requiere configurar una cuenta Stripe para el alcance QR de este MVP.
@@ -53,7 +53,7 @@ Si el portal no muestra `apiKeyId`, pedir a Pey dónde consultarlo. No adivinar 
 
 ## Alcance implementado
 
-- Dueña con enlace mágico de Supabase y sesión en cookies HttpOnly; sin modo empleado.
+- Inicio de sesión con correo y contraseña de Supabase y sesión en cookies HttpOnly; sin modo empleado.
 - Un comercio vinculado a la API key configurada en el servidor.
 - Montos enteros en centavos, límite por comercio, 10 creaciones por minuto y referencia única.
 - Solicitud con UUID idempotente y una sola llamada a Pey por cobro; un timeout no provoca un segundo QR automático.

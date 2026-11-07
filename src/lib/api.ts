@@ -9,7 +9,7 @@ export async function owner() {
   if (error || !user) throw new ApiError(401, 'Inicia sesión para abrir tu caja.');
   const email = process.env.OWNER_EMAIL?.trim().toLowerCase();
   if (!email) throw new ApiError(503, 'Configura OWNER_EMAIL antes de abrir la caja.');
-  if (user.email?.toLowerCase() !== email) throw new ApiError(403, 'Esta caja está reservada a su dueña.');
+  if (user.email?.toLowerCase() !== email) throw new ApiError(403, 'Tu usuario no tiene acceso a esta caja.');
   const admin = createAdminClient();
   const { data: merchant, error: merchantError } = await admin.from('merchants').select('*').eq('owner_user_id', user.id).maybeSingle();
   if (merchantError) throw new ApiError(503, 'No se pudo consultar tu comercio. Revisa la configuración de la base de datos.');
