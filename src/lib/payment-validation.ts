@@ -29,14 +29,17 @@ export const peyQrResponseSchema = z.object({
   qrString: z.string().min(1).max(32_768),
 });
 
-/** Unknown fields (including bank metadata) are intentionally stripped. */
+/** Keep only fields used to identify and validate this payment. The optional
+ * bankAccountId and metadata do not route payments in this single-key MVP and
+ * are intentionally stripped, including null/empty provider representations.
+ * Authorization still requires the signed apiKeyId, server-created QR and amount.
+ */
 export const peyQrPaymentSchema = z.object({
   type: z.literal("codi.qr.payment_received"),
   amount: z.number().positive().refine((value) => {
     try { pesosToCents(value); return true; } catch { return false; }
   }, "Monto inválido"),
   apiKeyId: z.string().min(1).max(128),
-  bankAccountId: z.string().min(1).max(128).optional(),
   codiQrId: z.string().min(1).max(128),
   concept: z.string().max(1000),
   datePaid: z.number().int().positive().max(253_402_300_799),

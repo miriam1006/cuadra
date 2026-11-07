@@ -45,3 +45,28 @@ test("payment parser strips bank metadata and rejects unrepresentable amounts", 
   assert.equal(peyQrPaymentSchema.safeParse({ ...payload, amount: 0.001 }).success, false);
   assert.equal(peyQrPaymentSchema.safeParse({ ...payload, type: "unknown" }).success, false);
 });
+
+test("signed payments accept omitted, null or empty optional bankAccountId", () => {
+  const key = Buffer.from("test-only-optional-bank-account-key");
+  const secret = `whsec_${key.toString("base64")}`;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const id = "test-optional-bank-account";
+  const payment = { type: "codi.qr.payment_received", amount: 0.01, apiKeyId: "test-api-id",
+    codiQrId: "test-qr-id", concept: "Prueba webhook", datePaid: 1794081327,
+    numRef: "2", transactionId: "test-transaction" };
+  for (const bankAccountId of [undefined, null, "", "test-bank-id"]) {
+    const body = JSON.stringify({ ...payment, bankAccountId });
+    const verified = verifyPeyWebhook(body, secret, {
+      "webhook-id": id, "webhook-timestamp": timestamp,
+      "webhook-signature": `v1,${createHmac("sha256", key).update(`${id}.${timestamp}.${body}`).digest("base64")}`,
+    });
+    const parsed = peyQrPaymentSchema.parse(verified);
+    assert.deepEqual(parsed, payment);
+    assert.equal("bankAccountId" in parsed, false);
+  }
+  for (const required of ["apiKeyId", "codiQrId", "transactionId", "amount"]) {
+    const incomplete: Record<string, unknown> = { ...payment, bankAccountId: null };
+    delete incomplete[required];
+    assert.equal(peyQrPaymentSchema.safeParse(incomplete).success, false);
+  }
+});
