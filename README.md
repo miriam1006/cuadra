@@ -27,7 +27,7 @@ Abrir http://localhost:3000/login. El webhook real necesita HTTPS público: usar
 4. En Vercel, importar `miriam1006/cuadra`, seleccionar Next.js y Node.js 22. No hay directorio raíz anidado si se subió esta carpeta.
 5. Agregar las variables indicadas abajo. Crear un primer despliegue y copiar su dominio estable, por ejemplo `https://cuadra-....vercel.app`.
 6. Actualizar `APP_URL` a ese origen HTTPS **sin barra final**, configurar en Supabase Auth la Site URL con ese origen y autorizar el redirect exacto `https://TU-DOMINIO/auth/callback`. Redesplegar después de cambiar variables.
-7. En Pey → Desarrollador → engrane de la API key, configurar `https://TU-DOMINIO/api/webhooks/pey`. Guardar el secreto en `PEY_WEBHOOK_SECRET` de Vercel. Nunca pegarlo en un chat.
+7. En Pey → Desarrollador → engrane de la API key, pegar `https://TU-DOMINIO/api/webhooks/pey` y pulsar Crear Secreto de Webhook. Confirmar que Pey guardó la URL para esa API key. Guardar el secreto generado por Pey en `PEY_WEBHOOK_SECRET` de Vercel y redesplegar. Guardar una variable de entorno por sí solo no registra el webhook en Pey.
 8. Asegurar que Pey pueda acceder al webhook sin un login de Vercel. La autenticación del endpoint es su firma, no la sesión del dueño. Revisar Deployment Protection o usar el dominio de producción según tu configuración.
 9. Crear un usuario con correo y contraseña en Supabase Authentication → Users y marcarlo confirmado para este piloto. Configurar OWNER_EMAIL con ese correo. Iniciar sesión en `/login`, crear el comercio y abrir caja.
 10. Cobrar **$0.01 MXN** utilizando la cuenta de pruebas de Pey. Pagar con CoDi desde otro dispositivo, esperar el aviso, revisar el folio/corte y comprobar el movimiento en Pey. Los centavos enviados a la cuenta de prueba pueden no devolverse; el usuario ya confirmó esta condición.
@@ -78,6 +78,8 @@ npm run build
 Las pruebas automatizadas cubren firma auténtica/manipulada, timestamp vencido/futuro, precisión de montos y validación del contrato. Las pruebas SQL cubren duplicados, montos distintos, pago tardío, recuperación por referencia, permisos/RLS y corte. No confundir pruebas unitarias aprobadas con una prueba real de banco a banco.
 
 ## Antes de abrirlo a otros negocios
+
+Para investigar un pago pendiente sin volver a cobrar, el usuario administrador puede abrir `/api/diagnostics/last-payment` en el navegador donde inició sesión. Es una consulta de solo lectura: compara el cobro local, los eventos verificados y las transacciones de Pey para su QR. No modifica estados ni devuelve claves, datos bancarios o payloads completos. El parámetro opcional `charge_id` permite seleccionar un cobro anterior. Un pago confirmado por Pey sin eventos locales requiere revisar la entrega del webhook y solicitar su reenvío si Pey lo permite.
 
 - Ejecutar la migración y fixtures SQL, probar login/QR/pago real y confirmar el abono y destinatario.
 - Definir recuperación operativa de eventos no procesados y consultar las transacciones por QR en Pey para conciliación. Hay endpoints documentados, pero no se incluye conciliador automático ni cron.

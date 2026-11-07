@@ -29,17 +29,22 @@ async function readLimitedBody(request: Request): Promise<string> {
 export async function POST(request: Request) {
   const secret = process.env.PEY_WEBHOOK_SECRET;
   const expectedApiKeyId = process.env.PEY_API_KEY_ID;
-  if (!secret || !expectedApiKeyId) return respond(503, { error: "Webhook sin configurar." });
+  if (!secret || !expectedApiKeyId) {
+    console.error("pey_webhook_rejected", { reason: "configuration_missing", status: 503 });
+    return respond(503, { error: "Webhook sin configurar." });
+  }
 
   const id = request.headers.get("webhook-id");
   const timestamp = request.headers.get("webhook-timestamp");
   const signature = request.headers.get("webhook-signature");
+  console.info("pey_webhook_received", { webhookId: id?.slice(0, 256), hasTimestamp: Boolean(timestamp), hasSignature: Boolean(signature) });
   if (!id || id.length > 256 || !timestamp || !signature) {
+    console.warn("pey_webhook_rejected", { reason: "headers_missing_or_invalid", status: 401 });
     return respond(401, { error: "Firma inválida." });
   }
   let rawBody: string;
   try { rawBody = await readLimitedBody(request); }
-  catch { return respond(413, { error: "Solicitud demasiado grande." }); }
+  catch { console.warn("pey_webhook_rejected", { reason: "body_too_large", status: 413 }); return respond(413, { error: "Solicitud demasiado grande." }); }
 
   let verifiedPayload: unknown;
   try {
@@ -50,19 +55,27 @@ export async function POST(request: Request) {
       "webhook-timestamp": timestamp,
       "webhook-signature": signature,
     });
-  } catch { return respond(401, { error: "Firma inválida." }); }
+  } catch { console.warn("pey_webhook_rejected", { webhookId: id, reason: "signature_or_timestamp_invalid", status: 401 }); return respond(401, { error: "Firma inválida." }); }
 
   if (typeof verifiedPayload !== "object" || verifiedPayload === null) {
+    console.warn("pey_webhook_rejected", { webhookId: id, reason: "invalid_event", status: 400 });
     return respond(400, { error: "Evento inválido." });
   }
   if ((verifiedPayload as { type?: unknown }).type !== "codi.qr.payment_received") {
     // This MVP only handles QR payments. Other signed events cannot change charges.
+    console.info("pey_webhook_ignored", { webhookId: id, reason: "unsupported_event_type" });
     return respond(200, { received: true, ignored: true });
   }
   const parsed = peyQrPaymentSchema.safeParse(verifiedPayload);
-  if (!parsed.success) return respond(400, { error: "Evento de pago inválido." });
+  if (!parsed.success) {
+    console.warn("pey_webhook_rejected", { webhookId: id, reason: "payment_contract_invalid", fields: parsed.error.issues.map(issue => issue.path.join(".")).slice(0, 12), status: 400 });
+    return respond(400, { error: "Evento de pago inválido." });
+  }
   const payment = parsed.data;
-  if (payment.apiKeyId !== expectedApiKeyId) return respond(401, { error: "Cuenta no autorizada." });
+  if (payment.apiKeyId !== expectedApiKeyId) {
+    console.warn("pey_webhook_rejected", { webhookId: id, reason: "api_key_id_mismatch", status: 401 });
+    return respond(401, { error: "Cuenta no autorizada." });
+  }
 
   try {
     const { data, error } = await createAdminClient().rpc("process_pey_payment", {
@@ -77,9 +90,10 @@ export async function POST(request: Request) {
     if (error || !data || data.retry) {
       // A failed database call or unmatched charge is never acknowledged as processed.
       // A later delivery can retry the durable event. No raw payload in logs.
-      console.error("pey_webhook_processing_pending", { webhookId: id });
+      console.error("pey_webhook_processing_pending", { webhookId: id, code: error?.code, outcome: data?.outcome });
       return respond(503, { error: "Pago pendiente de procesamiento." });
     }
+    console.info("pey_webhook_processed", { webhookId: id, outcome: data.outcome });
     return respond(200, { received: true });
   } catch {
     console.error("pey_webhook_processing_failed", { webhookId: id });
