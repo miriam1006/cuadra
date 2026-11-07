@@ -39,13 +39,15 @@ No se requiere configurar una cuenta Stripe para el alcance QR de este MVP.
 | Variable | Origen y uso |
 | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | URL de tu proyecto Supabase |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Clave pública legacy anon del proyecto (no service role) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Clave privada legacy service_role; solo servidor |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Clave pública `sb_publishable_...`; tipo Config en Vercel |
+| `SUPABASE_SECRET_KEY` | Clave privada `sb_secret_...`; tipo Secret en Vercel, solo servidor |
 | `OWNER_EMAIL` | Correo exacto autorizado para administrar este piloto |
 | `APP_URL` | Origen del despliegue; local: `http://localhost:3000` |
 | `PEY_API_KEY` | Clave secreta de producción vinculada a la cuenta de pruebas |
 | `PEY_API_KEY_ID` | **Identificador** de esa API key en Pey (campo `apiKeyId`), no el nombre visible ni el texto `sk_live_...` |
 | `PEY_WEBHOOK_SECRET` | Secreto de Standard Webhooks mostrado al crear el webhook |
+
+Compatibilidad: el servidor también acepta `NEXT_PUBLIC_SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` si los nombres nuevos no están configurados. No hace falta volver a capturar claves ya guardadas. Una clave privada nunca debe tener prefijo `NEXT_PUBLIC_`.
 
 Cuando cambies de API key, actualiza **tanto el secreto como el identificador y el secreto de webhook**, redespliega y verifica la cuenta receptora antes de cobrar. Una vez creado el comercio, su `pey_api_key_id` queda vinculado al identificador anterior: un cambio posterior requiere migración administrativa revisada, no solo cambiar variables. No reutilizar QR anteriores con otra cuenta.
 
