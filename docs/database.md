@@ -2,6 +2,8 @@
 
 Ejecuta `supabase/migrations/202611070001_initial.sql` en el SQL Editor de un proyecto Supabase nuevo. La migración es transaccional; no debe aplicarse dos veces. No contiene claves ni datos bancarios.
 
+Para habilitar conciliación contra la API de Pey, aplica después `supabase/migrations/202611070002_verified_reconciliation.sql`. En un proyecto que ya tiene la migración inicial, ejecuta **solo la segunda**, completa, en SQL Editor. No repitas la primera ni pegues secretos en el editor. La segunda conserva recibos existentes con `source = webhook` y permite recibos `api_reconciliation` sin inventar eventos de webhook.
+
 ## Alta del primer comercio
 
 1. Crea el usuario administrador en Supabase Auth con correo y contraseña y confirma su correo para el piloto.
@@ -27,6 +29,7 @@ Solo `service_role` puede ejecutar estas funciones. El servidor debe obtener el 
 | `cancel_charge` | `p_charge_id uuid`, `p_owner_user_id uuid` | Fila cancelada; solo cobros sin pago y pendientes/vencidos. |
 | `process_pey_payment` | `p_webhook_id text`, `p_payload jsonb`, `p_pey_api_key_id text`, `p_pey_ref text`, `p_transaction_id text`, `p_amount_cents integer`, `p_paid_at timestamptz` | JSON con `outcome`, `retry`, y cuando corresponde `charge_id`. |
 | `daily_corte` | `p_merchant_id uuid`, `p_owner_user_id uuid`, `p_date date` | JSON con `date`, `timezone`, `total_paid_cents`, `paid_count`, `review_receipt_count`, `review_amount_cents`, `pending_count`. Valida el dueño antes de agregar. |
+| `reconcile_pey_payment` | `p_merchant_id uuid`, `p_owner_user_id uuid`, `p_charge_id uuid`, `p_pey_api_key_id text`, `p_pey_ref text`, `p_transaction_id text`, `p_amount_cents integer`, `p_paid_at timestamptz` | JSON con `outcome`, `charge_id`, `retry: false`. Requiere la segunda migración y consulta autenticada a Pey desde el servidor antes de invocarlo. |
 
 ### Creación segura
 
@@ -54,6 +57,16 @@ Si el POST a Pey sí creó el QR pero su respuesta o la escritura de finalizaci�
 
 Un pago tras cancelación/vencimiento se conserva con `late_payment = true`. Cancelar localmente no revoca el QR en el banco. Una segunda transacción distinta nunca sobrescribe el folio de la primera: queda en `payment_receipts` y el cobro pasa a revisión.
 
+### Conciliación verificada mediante la API
+
+La segunda migración incorpora una segunda fuente confiable: el servidor consulta los pagos reales del QR a la API autenticada de Pey, comprueba que están pagados, su moneda/método y relaciones, y solo entonces invoca `reconcile_pey_payment` usando los datos recibidos de Pey. El navegador puede solicitar una revisión, pero no aporta ni valida la transacción, monto, estado o fecha del pago.
+
+La RPC exige coincidencia exacta de dueño, comercio, identificador de API key, ID del cobro y referencia Pey ya guardada. No recupera referencias ausentes por heurísticas. Acepta IDs de 1–255 caracteres sin espacios/control, centavos enteros positivos y una fecha real entre 2000 y cinco minutos en el futuro. Que el QR esté vencido al consultar **no rechaza** un pago histórico: se conserva `paid_at` del proveedor y se clasifica el pago con los estados/fechas del cobro. Bloquea primero el cobro y luego la transacción, como el webhook, para evitar doble registro entre ambas rutas.
+
+`payment_receipts.source` distingue `webhook` y `api_reconciliation`. La base exige que solo los primeros tengan `webhook_id`; no se crean webhooks artificiales. Una transacción ya registrada por cualquier fuente devuelve `duplicate_transaction` sin alterar su procedencia. Datos incompatibles para el mismo ID devuelven `transaction_conflict` y una entrada de bitácora. Montos distintos o pagos adicionales pasan a `review`; los demás devuelven `paid`/`paid_late`. La bitácora identifica `actor = api_reconciliation` y acción `payment.reconciled` o `payment.review`.
+
+Solo `service_role` puede ejecutar esta función. SQL no contacta a Pey ni puede probar que el servidor hizo la consulta: no debe invocarse desde una ruta que acepte datos de pago del navegador. La comprobación HTTP es parte obligatoria de la integración.
+
 ## Historial y corte
 
 Las tablas tienen RLS; el dueño puede leer solo su comercio. El navegador no tiene privilegios de escritura, ni acceso a `webhook_events`. Los endpoints con cliente administrativo deben restringir siempre `merchant_id`; RLS no protege llamadas con `service_role`.
@@ -71,3 +84,5 @@ Validar la migración en Supabase y probar dos usuarios aislados, webhook duplic
 En un proyecto de pruebas, después de la migración, ejecuta `supabase/tests/payment_flow.sql` como administrador. Inserta dos usuarios temporales y sus comercios, prueba idempotencia, claim único, webhook anterior al QR, transacción repetida/conflictiva, montos distintos, pago adicional, cancelación/vencimiento, recuperación estricta por referencia firmada (incluidos rechazos por falta de claim, referencia/API key incorrectas y sustitución de referencia existente), corte basado en recibos y pendientes vigentes, aislamiento RLS y bloqueo de escritura/RPC desde el rol del navegador. Todo termina con `ROLLBACK`; cualquier fallo lanza excepción.
 
 La migración y esta prueba pasaron localmente en PostgreSQL mediante PGlite, con roles `anon`, `authenticated`, `service_role BYPASSRLS` y stubs mínimos de `auth.users`/`auth.uid()`. También se verificó que el rollback no dejó usuarios, comercios ni cobros. Esto valida sintaxis SQL, funciones y permisos bajo esos stubs; no sustituye la ejecución en Supabase real. No prueba PostgREST, autenticación por cookies, firma HTTP ni concurrencia entre conexiones.
+
+Tras la segunda migración ejecuta también `supabase/tests/reconciliation_flow.sql`. Pasó en el mismo entorno PGlite junto con el fixture original: recuperación histórica, idempotencia API, webhook antes/después de conciliación, procedencia de recibos, monto distinto/pago extra, corte sin duplicación, aislamiento dueño/comercio/key/QR, fechas inválidas, conflicto entre comercios y prohibición para roles del navegador. El harness local aplica las migraciones en orden y ejecuta ambos fixtures con rollback.
