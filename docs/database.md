@@ -86,3 +86,45 @@ En un proyecto de pruebas, después de la migración, ejecuta `supabase/tests/pa
 La migración y esta prueba pasaron localmente en PostgreSQL mediante PGlite, con roles `anon`, `authenticated`, `service_role BYPASSRLS` y stubs mínimos de `auth.users`/`auth.uid()`. También se verificó que el rollback no dejó usuarios, comercios ni cobros. Esto valida sintaxis SQL, funciones y permisos bajo esos stubs; no sustituye la ejecución en Supabase real. No prueba PostgREST, autenticación por cookies, firma HTTP ni concurrencia entre conexiones.
 
 Tras la segunda migración ejecuta también `supabase/tests/reconciliation_flow.sql`. Pasó en el mismo entorno PGlite junto con el fixture original: recuperación histórica, idempotencia API, webhook antes/después de conciliación, procedencia de recibos, monto distinto/pago extra, corte sin duplicación, aislamiento dueño/comercio/key/QR, fechas inválidas, conflicto entre comercios y prohibición para roles del navegador. El harness local aplica las migraciones en orden y ejecuta ambos fixtures con rollback.
+
+## Catálogo, carrito y equipo — migración 003
+
+En un proyecto existente, aplica **solo** `supabase/migrations/202611080003_catalog_and_team.sql` después de 001 y 002. En una instalación nueva aplica las tres en orden. El SQL es transaccional y no debe repetirse. No contiene secretos y no crea usuarios de Auth.
+
+`merchant_members` asigna cada usuario de Auth a un único comercio con rol `admin` o `cashier`. La migración convierte a cada dueño existente en administrador activo; un trigger hace lo mismo al crear un comercio desde el servidor. El dueño no puede desactivarse, eliminarse ni perder su rol administrador. No hay transferencia de propiedad en esta versión. Las asignaciones a otro comercio se rechazan incluso si la membresía está inactiva.
+
+Un administrador puede crear/editar/archivar productos y administrar integrantes. Un cajero activo puede consultar productos activos, crear cobros manuales o de carrito y consultar/cancelar/conciliar sus propios cobros según los estados permitidos. Su corte suma únicamente sus recibos. Los administradores ven todos los cobros, recibos y cortes de su comercio. Un integrante desactivado pierde acceso en base de datos; no basta con ocultar botones en la interfaz.
+
+### Contratos de servidor
+
+Todas estas RPC requieren `service_role`. El servidor obtiene el actor de una sesión de Auth validada; no acepta un UUID de actor proporcionado por el navegador. El rol activo se vuelve a verificar en SQL.
+
+| RPC | Parámetros nombrados | Resultado |
+| --- | --- | --- |
+| `save_product` | `p_merchant_id uuid`, `p_actor_user_id uuid`, `p_product_id uuid` (null para crear), `p_name text`, `p_price_cents integer`, `p_barcode text` (nullable), `p_active boolean` | Fila `products`. Solo admin. |
+| `set_merchant_member` | `p_merchant_id uuid`, `p_actor_user_id uuid`, `p_user_id uuid`, `p_display_name text`, `p_role text`, `p_active boolean` | Fila `merchant_members`. El usuario debe existir en Auth. Solo admin. |
+| `attach_merchant_member_by_email` | `p_merchant_id uuid`, `p_actor_user_id uuid`, `p_email text`, `p_display_name text`, `p_role text`, `p_active boolean` | Busca exactamente el correo normalizado con lower/trim en Auth y llama al mismo setter. No crea usuarios. |
+| `list_merchant_team` | `p_merchant_id uuid`, `p_actor_user_id uuid` | Array JSON `{user_id,email,display_name,role,active,created_at,is_owner}`. Solo admin; Auth no se expone al navegador por SQL. |
+| `reserve_product_charge` | `p_merchant_id uuid`, `p_actor_user_id uuid`, `p_items jsonb`, `p_idempotency_key uuid` | Fila `charges` con monto calculado del catálogo y snapshots persistidos. |
+
+Las firmas existentes de `reserve_charge`, `cancel_charge`, `reconcile_pey_payment` y `daily_corte` permanecen iguales; el parámetro histórico `p_owner_user_id` ahora representa al **actor activo**, que puede ser administrador o cajero. No cambian la firma ni la verificación criptográfica del webhook. `claim_charge_creation` y `finalize_charge` conservan su contrato y siguen siendo internos del servidor.
+
+### Integridad del catálogo y del carrito
+
+- Nombre de producto: 1–100 caracteres, normalizado con trim. Precio: entero en centavos de 1 a 100000000.
+- Código: texto nullable de 1–64 caracteres, sin espacios exteriores ni controles; conserva ceros iniciales y permite espacios internos. Es único dentro del comercio cuando existe, incluso si el producto está archivado. La API puede convertir un campo vacío a null antes de llamar la RPC.
+- El carrito admite 1–50 productos distintos. Cada objeto contiene **exactamente** `product_id` (UUID en texto) y `quantity` (entero de 1 a 999). No acepta precios del navegador, IDs repetidos ni productos ajenos/inactivos.
+- SQL bloquea el comercio, consulta precios confiables y calcula el total en bigint antes de validar contra el máximo del comercio y convertir a centavos integer. El concepto se genera como `Venta de N producto(s)`.
+- `charge_items` guarda el nombre, precio unitario y cantidad del momento del cobro, con subtotal generado. Tiene claves foráneas compuestas para impedir mezclas entre comercios. Un trigger rechaza actualizaciones y eliminaciones del snapshot; archivar/renombrar/cambiar precio de un producto no altera cobros existentes.
+- La clave de idempotencia pertenece al creador y distingue cobro manual de carrito. Un reintento compara productos/cantidades en orden canónico **antes** de validar precios o archivo actuales: repetir el mismo carrito devuelve el cobro original aunque cambie el catálogo. Cambiar cantidades, reutilizar la clave con otro actor o pasar de manual a carrito genera conflicto.
+- Se mantiene el límite de diez creaciones por minuto para el comercio y las referencias numéricas únicas no reutilizadas.
+
+Los endpoints que usan el cliente administrativo deben filtrar siempre comercio y rol/creador: `service_role` evita RLS. La base proporciona defensa adicional en todas las RPC de escritura; las lecturas directas autenticadas tienen RLS por comercio y rol. El helper `current_merchant_role` usa `auth.uid()` y un `search_path` vacío para evitar recursión de políticas; no admite un UUID de usuario arbitrario. Los cajeros no leen correos de otros integrantes ni la bitácora. No hay escrituras `anon`/`authenticated` ni llamadas directas a RPC de administración desde el navegador.
+
+Errores habituales: `admin_required` (403), `product_not_found`/`merchant_not_found`/`charge_not_found` (respuesta genérica fuera de alcance), `invalid_product`/`invalid_cart`/`duplicate_cart_product`/`cart_product_unavailable`/`invalid_amount` (400), `idempotency_conflict` (409), `rate_limited` (429), `member_other_merchant` y `owner_membership_protected` (conflicto). El servidor debe mapearlos sin exponer datos de otro comercio.
+
+### Verificación
+
+`supabase/tests/catalog_team_flow.sql` es un fixture con rollback que prueba permisos de admin delegado/cajero, incorporación por correo, dueño protegido, asignación cruzada rechazada, ceros iniciales/código único, precios y snapshots, reintentos tras cambio de precio/archivo, manipulación de precios, productos ajenos/archivados, máximo de monto, cobros/conciliación/corte por creador, membresía desactivada y RLS de productos/equipo/recibos/items. La migración 003 y este fixture pasaron en PGlite junto con los fixtures anteriores de pagos y conciliación. El rollback dejó vacías las tablas de usuarios, comercios y cobros del harness.
+
+La validación usa PostgreSQL con stubs de roles/Auth; resta verificar Supabase real, sesiones y endpoints HTTP, escáner físico y concurrencia entre conexiones. No incluye inventario, devoluciones, cámara ni búsqueda externa de productos.

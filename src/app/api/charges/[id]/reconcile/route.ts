@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { owner, fail, sameOrigin, jsonBody, ApiError, publicCharge } from "@/lib/api";
+import { access, fail, sameOrigin, jsonBody, ApiError, publicCharge } from "@/lib/api";
+import { CHARGE_WITH_ITEMS, catalogRpcFailure } from "@/lib/catalog-validation";
 import { getPeyQrTransactions, PeyError } from "@/lib/pey";
 import { reconciliationRequestSchema, reconciliationScopeAllowed, parseReconciliationProof } from "@/lib/reconciliation-validation";
 
@@ -11,15 +12,19 @@ export const maxDuration = 30;
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     sameOrigin(request);
-    const { user, merchant, admin } = await owner();
+    const { user, merchant, role, admin } = await access();
     if (!merchant) throw new ApiError(404, "No hay un comercio configurado.");
     const { id } = await params;
     if (!z.uuid().safeParse(id).success) throw new ApiError(400, "Identificador de cobro inválido.");
     if (!reconciliationRequestSchema.safeParse(await jsonBody(request)).success) {
       throw new ApiError(400, "La verificación no acepta montos ni datos de pago del navegador.");
     }
-    const { data: charge, error } = await admin.from("charges").select("*")
-      .eq("id", id).eq("merchant_id", merchant.id).maybeSingle();
+    const scoped = () => {
+      let query = admin.from("charges").select(CHARGE_WITH_ITEMS).eq("id", id).eq("merchant_id", merchant.id);
+      if (role === "cashier") query = query.eq("created_by", user.id);
+      return query;
+    };
+    const { data: charge, error } = await scoped().maybeSingle();
     if (error) throw new ApiError(503, "No se pudo consultar el cobro.");
     if (!charge) throw new ApiError(404, "Cobro no encontrado.");
     if (!charge.pey_ref) throw new ApiError(409, "Este cobro no tiene una referencia de Pey disponible para verificar.");
@@ -27,6 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       userId: user.id, merchantId: merchant.id, merchantOwnerId: merchant.owner_user_id,
       merchantApiKeyId: merchant.pey_api_key_id, expectedApiKeyId: process.env.PEY_API_KEY_ID,
       chargeMerchantId: charge.merchant_id, qrId: charge.pey_ref,
+      role, chargeCreatedBy: charge.created_by,
     })) throw new ApiError(403, "La cuenta de Pey no coincide con este comercio. Revisa la configuración.");
 
     let proof: ReturnType<typeof parseReconciliationProof>;
@@ -52,7 +58,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         p_amount_cents: payment.amountCents,
         p_paid_at: payment.paidAt,
       });
-      if (processingError || !data || data.retry !== false) {
+      if (processingError) {
+        const failure = catalogRpcFailure(processingError);
+        if (failure.status === 403 || failure.status === 404) throw new ApiError(failure.status, failure.message);
+        throw new ApiError(503, "La verificación quedó incompleta. Vuelve a verificar para terminar sin duplicar pagos.");
+      }
+      if (!data || data.retry !== false) {
         // Per-transaction writes are idempotent. A retry safely resumes an
         // interrupted batch; never claim no data changed after a partial write.
         throw new ApiError(503, "La verificación quedó incompleta. Vuelve a verificar para terminar sin duplicar pagos.");
@@ -68,8 +79,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       }
     }
 
-    const { data: updated, error: refreshError } = await admin.from("charges").select("*")
-      .eq("id", charge.id).eq("merchant_id", merchant.id).single();
+    const { data: updated, error: refreshError } = await scoped().single();
     if (refreshError || !updated) throw new ApiError(503, "No se pudo consultar el resultado. Vuelve a verificar sin repetir el pago.");
     const outcome = proof.confirmed.length === 0 ? "no_payment"
       : updated.payment_status === "review" ? "review"

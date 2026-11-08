@@ -12,9 +12,16 @@ export function reconciliationScopeAllowed(input: {
   expectedApiKeyId: string | undefined;
   chargeMerchantId: string;
   qrId: string | null;
+  role?: "admin" | "cashier";
+  chargeCreatedBy?: string;
 }): boolean {
+  // Explicit roles come only from access() after active membership verification.
+  // The undefined-role path preserves the legacy single-owner caller contract.
+  const actorAllowed = input.role === "admin" ? true
+    : input.role === "cashier" ? input.userId === input.chargeCreatedBy
+    : input.userId === input.merchantOwnerId;
   return Boolean(input.expectedApiKeyId && input.qrId
-    && input.userId === input.merchantOwnerId
+    && input.userId && actorAllowed
     && input.merchantId === input.chargeMerchantId
     && input.merchantApiKeyId === input.expectedApiKeyId);
 }

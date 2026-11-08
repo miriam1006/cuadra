@@ -29,6 +29,17 @@ test("authenticated proof retains mismatches and extra payments as actual receip
   assert.deepEqual(parseReconciliationProof(page([{ ...paid, status: "PENDING", datePaid: undefined }]), now).confirmed, []);
 });
 
+test("verified delegated admins and cashiers have distinct reconciliation scopes", () => {
+  const scope = { userId: "delegated-admin", merchantId: "merchant", merchantOwnerId: "original-owner", merchantApiKeyId: "key", expectedApiKeyId: "key", chargeMerchantId: "merchant", qrId: "qr" };
+  assert.equal(reconciliationScopeAllowed({ ...scope, role: "admin" }), true);
+  assert.equal(reconciliationScopeAllowed({ ...scope, role: "admin", chargeMerchantId: "other" }), false);
+  assert.equal(reconciliationScopeAllowed({ ...scope, role: "admin", expectedApiKeyId: "other" }), false);
+  assert.equal(reconciliationScopeAllowed({ ...scope, role: "cashier", chargeCreatedBy: scope.userId }), true);
+  assert.equal(reconciliationScopeAllowed({ ...scope, role: "cashier", chargeCreatedBy: "other" }), false);
+  assert.equal(reconciliationScopeAllowed(scope), false);
+  assert.equal(reconciliationScopeAllowed({ ...scope, userId: "original-owner" }), true);
+});
+
 test("incomplete or truncated provider evidence fails closed before any write", () => {
   for (const invalid of [
     page([paid], true), page([paid, { ...paid, id: "transaction-2", currency: undefined }]),
