@@ -6,6 +6,22 @@ Caja móvil para cobrar con CoDi a través de Pey: QR por venta, confirmación v
 
 Incluye monto libre y dictado, catálogo con carga CSV y códigos de barras, canasta de productos, accesos de administrador/cajero, avisos de voz configurables y cortes por fecha. Construido con Next.js, Supabase y Pey, desplegado en Vercel. La entrega pasó 76 pruebas automatizadas, TypeScript y compilación, además de las verificaciones de integración descritas abajo.
 
+## Acceso de evaluación
+
+Abre la [demo de Cuadra](https://cuadra-gray.vercel.app/) e inicia sesión con la cuenta compartida de evaluación:
+
+| Campo | Valor |
+| --- | --- |
+| Correo | `demo@cuadra.example` |
+| Contraseña | `MielconLimon1234` |
+| Rol | Administrador |
+
+Estas credenciales son públicas y exclusivas de la demo. El acceso permite revisar catálogo, carga CSV, cobros, historial, usuarios y cortes. Conserva la contraseña para que los demás evaluadores puedan entrar y utiliza únicamente datos de prueba.
+
+**Los pagos son reales: realiza las pruebas únicamente con montos de centavos.** La cuenta receptora es la cuenta de pruebas configurada con Pey.
+
+El código funcional entregado corresponde al commit [`8284346`](https://github.com/miriam1006/cuadra/commit/82843464d2f9e631ddb8f38a7768d5087c778aa7). Esta sección añade únicamente las instrucciones de acceso para la evaluación; no modifica la aplicación.
+
 ## Estado real
 
 Implementación inicial para un comercio, con administradores y cajeros. Cada usuario pertenece a un solo comercio en este piloto. No contiene pagos simulados, credenciales ni datos bancarios. Es una base para un piloto supervisado: requiere configurar Supabase/Pey/Vercel y verificar el flujo completo antes de abrirlo a otros negocios. Las pruebas locales y las consultas a Pey no sustituyen una prueba completa de webhook, pantalla, voz y corte.
